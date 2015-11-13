@@ -13,7 +13,7 @@
 #' mysql.conn or postgres.conn respectively. The connection file is a comma
 #' seperated file with four fields: user, password, host, and port. 
 #' @param data_dir the location where the dataset should be installed.
-#' Only relevant for csv connection types. 
+#' Only relevant for csv connection types. Defaults to current working directory
 #' @param log_dir the location where the retriever log should be stored if
 #' the progress is not printed to the console
 #' @export
@@ -22,7 +22,7 @@
 #' ecoretriever::install('MCDB', 'csv')
 #' }
 install = function(dataset, connection, db_file=NULL, conn_file=NULL,
-                   data_dir=NULL, log_dir=NULL){
+                   data_dir='.', log_dir=NULL){ 
   if (missing(connection)) {
     stop("The argument 'connection' must be set to one of the following options: 'mysql', 'postgres', 'sqlite', 'msaccess', or 'csv'")
   }
@@ -36,7 +36,7 @@ install = function(dataset, connection, db_file=NULL, conn_file=NULL,
                   connection, "server create a 'conn_file' with the format:", 
                  format, "\nwhere order of arguments does not matter"))
     }
-    conn = data.frame(t(read.table(conn_file, row.names=1)))
+    conn = data.frame(t(utils::read.table(conn_file, row.names=1)))
     writeLines(strwrap(paste('Using conn_file:', conn_file,
                              'to connect to a', connection,
                              'server on host:', conn$host)))
@@ -51,11 +51,8 @@ install = function(dataset, connection, db_file=NULL, conn_file=NULL,
       cmd = paste('retriever install', connection, dataset, '--file', db_file)
   }
   else if (connection == 'csv') {
-    if (!is.null(data_dir))
-      cmd = paste('retriever install csv --table_name',
+    cmd = paste('retriever install csv --table_name',
                   file.path(data_dir, '{db}_{table}.csv'), dataset)
-    else
-      cmd = paste('retriever install csv', dataset)
   }
   else
     stop("The argument 'connection' must be set to one of the following options: 'mysql', 'postgres', 'sqlite', 'msaccess', or 'csv'")
@@ -98,7 +95,7 @@ fetch = function(dataset, quiet=TRUE){
   list_names = sub(paste(dataset, '_', sep=''), '', list_names)
   names(out) = list_names
   for (i in seq_along(files))
-    out[[i]] = read.csv(file.path(temp_path, files[i]))
+    out[[i]] = utils::read.csv(file.path(temp_path, files[i]))
   return(out)
 }
 
@@ -109,6 +106,7 @@ fetch = function(dataset, quiet=TRUE){
 #'
 #' @param dataset the name of the dataset that you wish to download
 #' @param path the path where the data should be downloaded to
+#' @param sub_dir if true and the downloaded dataset is stored in subdirectories those subdirectories will be preserved and placed according the path argument, defaults to false.
 #' @param log_dir the location where the retriever log should be stored if
 #' the progress is not printed to the console
 #' @export
@@ -118,8 +116,11 @@ fetch = function(dataset, quiet=TRUE){
 #' ## list files downloaded
 #' dir('.', pattern='MCDB')
 #' }
-download = function(dataset, path='.', log_dir=NULL) {
-    cmd = paste('retriever download', dataset, '-p', path)
+download = function(dataset, path='.', sub_dir=FALSE, log_dir=NULL) {
+    if (sub_dir)
+        cmd = paste('retriever download', dataset, dataset, '-p', path, '--subdir')
+    else 
+        cmd = paste('retriever download', dataset, '-p', path)
     if (!is.null(log_dir)) {
         log_file = file.path(log_dir, paste(dataset, '_download.log', sep=''))
         cmd = paste(cmd, '>', log_file, '2>&1')
@@ -127,23 +128,60 @@ download = function(dataset, path='.', log_dir=NULL) {
     system(cmd)
 }
 
-#' Display a list all available dataset scripts.
+#' Name all available dataset scripts.
 #'
 #' Additional information on the available datasets can be found at http://ecodataretriever.org/available-data.html
 #' 
-#' @return returns the log of the available datasets for download
+#' @return returns a character vector with the available datasets for download
 #' @export
 #' @examples 
+#' \donttest{
 #' ecoretriever::datasets()
+#' }
 datasets = function(){
-  system('retriever ls') 
+  system('retriever ls', intern = TRUE) 
+}
+
+#' Update the retriever's dataset scripts to the most recent versions.
+#' 
+#' This function will check if the version of the retriever's scripts in your local
+#' directory \file{~/.retriever/scripts/} is up-to-date with the most recent official
+#' retriever release. Note it is possible that even more updated scripts exist
+#' at the retriever repository \url{https://github.com/weecology/retriever/tree/master/scripts}
+#' that have not yet been incorperated into an official release, and you should 
+#' consider checking that page if you have any concerns. 
+#' @keywords utilities
+#' @export
+#' @examples
+#' \donttest{
+#' ecoretriever::get_updates()
+#' }
+get_updates = function() {
+    writeLines(strwrap('Please wait while the retriever updates its scripts, ...'))
+    update_log = system('retriever update', intern=TRUE, ignore.stdout=FALSE,
+                        ignore.stderr=TRUE)
+    writeLines(strwrap('The retriever scripts are up-to-date with the most recent official release!'))
+    class(update_log) = "update_log"
+    return(update_log)
+}
+
+#' @export
+print.update_log = function(x, ...) {
+    # clean up and print the update log output
+    object = strsplit(paste(object, collapse = ' ; '), 'Downloading script: ')
+    object = sort(sapply(strsplit(object[[1]][-1], ' ; '), 
+                       function(x) x[[1]][1]))
+    object[1] = paste('Downloaded scripts:', object[1])
+    cat(object, fill=TRUE, sep=', ')
 }
 
 .onAttach = function(...) {
-  packageStartupMessage(
-    "\n  New to ecoretriever? Examples at
-    https://github.com/ropensci/ecoretriever/
-    Use citation(package='ecoretriever') for the package citation
+    packageStartupMessage(
+        "\n  Use get_updates() to download the most recent release of download scripts
+     
+    New to ecoretriever? Examples at
+      https://github.com/ropensci/ecoretriever/
+      Use citation(package='ecoretriever') for the package citation
     \nUse suppressPackageStartupMessages() to suppress these messages in the future")
 }
 
@@ -153,12 +191,7 @@ datasets = function(){
 
 check_for_retriever = function(...) {
     retriever_path = Sys.which('retriever')
-    if (retriever_path != '') {
-        packageStartupMessage('Please wait while retriever updates its scripts, ...')
-        system('retriever update', ignore.stdout=FALSE, ignore.stderr=TRUE)
-        packageStartupMessage('The retriever scripts are up-to-date!')
-    }
-    else  {
+    if (retriever_path == '') {
         path_warn = 'The retriever is not on your path and may not be installed.'
         mac_instr = 'Follow the instructions for installing and manually adding the EcoData Retriever to your path at http://ecodataretriever.org/download.html'
         download_instr = 'Please upgrade to the most recent version of the EcoData Retriever, which will automatically add itself to the path http://ecodataretriever.org/download.html'
